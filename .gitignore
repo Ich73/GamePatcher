@@ -1,0 +1,8 @@
+*
+!*/
+!Resources/Images/*.ico
+!/.gitignore
+!/LICENSE
+!/README.md
+!/GamePatcher.py
+!/GamePatcher.spec
