@@ -16,7 +16,7 @@ from subprocess import run, STDOUT, PIPE
 from urllib.request import urlopen
 import webbrowser
 
-VERSION = 'v1.0.0'
+VERSION = 'v1.1.0'
 REPOSITORY = r'Ich73/GamePatcher'
 
 
