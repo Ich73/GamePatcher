@@ -1,5 +1,5 @@
 # Game Patcher
-Game Patcher is a small program to simplify the workflow of patching a CIA file.  
+Game Patcher is a small program to simplify the workflow of patching CIA and 3DS files.  
   
 It uses the following tools:
   * [xdelta](https://github.com/jmacd/xdelta-gpl) ([v3.1.0](https://github.com/jmacd/xdelta-gpl/releases/tag/v3.1.0))
