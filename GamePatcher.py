@@ -12,7 +12,7 @@ from shutil import copyfile, copytree, rmtree
 from io import BytesIO
 from zipfile import ZipFile
 import json
-from subprocess import run, DEVNULL, PIPE
+from subprocess import run, STDOUT, PIPE
 from urllib.request import urlopen
 import webbrowser
 
@@ -113,68 +113,74 @@ def version2int(s):
 def int2version(v):
 	return 'v%d.%d.%d' % (v // 2**10, v % 2**10 // 2**4, v % 2**10 % 2**4)
 
-def createName(cia, patch):
-	return '%s (%s).cia' % (splitext(cia)[0], splitext(patch)[0])
+def createName(game, patch):
+	return '%s (%s)%s' % (splitext(game)[0], splitext(patch)[0], splitext(game)[1])
 
 def escapeName(name):
 	""" Espaces a filename by replacing several characters with underscores. """
-	return re.sub(r'[^\w]+', '_', splitext(name)[0]).strip('_')
+	return re.sub(r'[^\w]+', '_', name).strip('_')
 
 def automaticMappings():
-	""" Tries to automatically map which patches should be applied to which cia files.
+	""" Tries to automatically map which patches should be applied to which cia/3ds files.
 		Returns the mappings if successful, returns None otherwise.
 	"""
-	# collect all zip and cia files
-	patches = [f for f in listdir('.') if isfile(f) and splitext(f)[1] == '.zip']
-	cias = [f for f in listdir('.') if isfile(f) and splitext(f)[1].lower() == '.cia']
+	# set mappings for each type individually
+	mappings = set()
+	for type in ['.cia', '.3ds']:
+		
+		# collect all zip and game files
+		patches = [f for f in listdir('.') if isfile(f) and splitext(f)[1] == '.zip']
+		games = [f for f in listdir('.') if isfile(f) and splitext(f)[1].lower() == type]
+		
+		# remove games that look like already patched games
+		games = [game for game in games if all('(%s)' % splitext(patch)[0] not in game for patch in patches)]
+		
+		# guess the versions of all patches and games
+		def guessVersions(files): return {file: (re.search(r'v\d\.\d(\.\d)?', file) or [None])[0] for file in files}
+		patches = guessVersions(patches)
+		games = guessVersions(games)
+		
+		# set None to v1.0 if only one version not specified
+		def guessFirstVersion(files):
+			if sum(1 for version in files.values() if version is None) == 1:
+				return {file: version if version is not None else 'v1.0' for file, version in files.items()}
+			return files
+		patches = guessFirstVersion(patches)
+		games = guessFirstVersion(games)
+		
+		# set game version by file size
+		if any(version is None for version in games.values()) and len(games) == 2 and sum(1 for version in set(patches.values()) if version not in [None, 'v1.0']) <= 1:
+			update_version = next((version for version in set(patches.values()) if version not in [None, 'v1.0']), None)
+			games = sorted(games.keys(), key=getsize, reverse=True)
+			if update_version is not None: # update patch found, set version by file size
+				games = {games[0]: 'v1.0', games[1]: update_version}
+			else: # no update patch found, only keep larger file
+				games = {games[0]: 'v1.0'}
+		
+		# no duplicates games found and at least one matching patch
+		if len(set(games.values())) == len(games.values()) and any(version in games.values() for version in patches.values()):
+			for patch, version in patches.items():
+				game = next((game for game, version2 in games.items() if version2 == version), None)
+				if game is None: continue
+				ver = 0 if version is None else version2int(version)
+				if version != 'v1.0': ver += 2**4 # increase version of updates by 0.1 to avoid update warnings
+				mappings.add((patch, game, ver))
 	
-	# remove cias that look like already patched cias
-	cias = [cia for cia in cias if all('(%s)' % splitext(patch)[0] not in cia for patch in patches)]
-	
-	# guess the versions of all patches and cias
-	def guessVersions(files): return {file: (re.search(r'v\d\.\d(\.\d)?', file) or [None])[0] for file in files}
-	patches = guessVersions(patches)
-	cias = guessVersions(cias)
-	
-	# set None to v1.0 if only one version not specified
-	def guessFirstVersion(files):
-		if sum(1 for version in files.values() if version is None) == 1:
-			return {file: version if version is not None else 'v1.0' for file, version in files.items()}
-		return files
-	patches = guessFirstVersion(patches)
-	cias = guessFirstVersion(cias)
-	
-	# set cia version by file size
-	if any(version is None for version in cias.values()) and len(cias) == 2 and sum(1 for version in set(patches.values()) if version not in [None, 'v1.0']) <= 1:
-		update_version = next((version for version in set(patches.values()) if version not in [None, 'v1.0']), None)
-		cias = sorted(cias.keys(), key=getsize, reverse=True)
-		if update_version is not None: # update patch found, set version by file size
-			cias = {cias[0]: 'v1.0', cias[1]: update_version}
-		else: # no update patch found, only keep larger file
-			cias = {cias[0]: 'v1.0'}
-	
-	# no duplicates cias found and at least one matching patch
-	if len(set(cias.values())) == len(cias.values()) and any(version in cias.values() for version in patches.values()):
-		mappings = set()
-		for patch, version in patches.items():
-			cia = next((cia for cia, version2 in cias.items() if version2 == version), None)
-			if cia is None: continue
-			ver = 0 if version is None else version2int(version)
-			if version != 'v1.0': ver += 2**4 # increase version of updates by 0.1 to avoid update warnings
-			mappings.add((patch, cia, ver))
-		return mappings
+	# return mappings
+	if mappings: return mappings
 	
 	# automatic mapping not possible
 	return None
 
 def askMappings():
-	""" Lets the user enter the patch files, cia files and versions manually. """
+	""" Lets the user enter the patch files, game files and versions manually. """
 	
-	def collectFiles(type, exclude = set()):
-		return [f for f in listdir('.') if isfile(f) and splitext(f)[1].lower() == type and f not in exclude]
+	def collectFiles(types, exclude = set()):
+		if isinstance(types, str): types = [types]
+		return [f for f in listdir('.') if isfile(f) and splitext(f)[1].lower() in types and f not in exclude]
 	
-	def askFile(type, exclude = set()):
-		files = collectFiles(type, exclude)
+	def askFile(types, exclude = set()):
+		files = collectFiles(types, exclude)
 		for i, file in enumerate(files): print('  ', '[%d] %s' % (i+1, file))
 		while True:
 			idx = input('Your selection? ').strip()
@@ -189,9 +195,9 @@ def askMappings():
 		print()
 		input('Press Enter to exit...')
 		sys.exit(2)
-	if not collectFiles('.cia'):
-		print('Error:', 'No cia files were found.')
-		print('Place the game as a .cia file in this directory and try again.')
+	if not collectFiles(['.cia', '.3ds']):
+		print('Error:', 'No game files were found.')
+		print('Place the game as a .cia or .3ds file in this directory and try again.')
 		print()
 		input('Press Enter to exit...')
 		sys.exit(2)
@@ -203,13 +209,13 @@ def askMappings():
 		patch = askFile('.zip', {p for p, _, _ in mappings})
 		print()
 		
-		# ask cia
-		print('Enter the CIA you want to apply the patch to:')
-		cia = askFile('.cia')
+		# ask game
+		print('Enter the game you want to apply the patch to:')
+		game = askFile(['.cia', '.3ds'])
 		print()
 		
 		# ask version
-		print('Enter the version of the patched CIA:')
+		print('Enter the version of the patched output file:')
 		print('  ', 'It is recommended to increase the version of update CIAs by 0.1.')
 		print('  ', 'If you don\'t know the version, enter 0.')
 		print('  ', 'Examples: v1.0, v1.2.0.')
@@ -222,7 +228,7 @@ def askMappings():
 		print()
 		
 		# add to mappings
-		mappings.add((patch, cia, version))
+		mappings.add((patch, game, version))
 		
 		# exit if no patches left
 		if not collectFiles('.zip', {p for p, _, _ in mappings}): break
@@ -273,56 +279,62 @@ def downloadExe(download_url, filename):
 	print('Downloaded', filename)
 	print()
 
-def extractCIA(cia_file):
-	""" Extracts the given [cia_file]. """
+def extractGame(game_file):
+	""" Extracts the given [game_file]. Supports .cia and .3ds files. """
 	try:
 		# check if already exists
-		cia_dir = escapeName(cia_file)
-		if isdir(cia_dir):
-			print('Found', cia_dir)
+		game_dir = escapeName(game_file)
+		if isdir(game_dir):
+			print('Found', game_dir)
 			return True
-		print('Extract', cia_file)
+		print('Extract', game_file)
+		mode = splitext(game_file)[1][1:].lower()
 		
-		# step 1: CIA -> DecryptedPartitionX.bin
+		# step 1: cia / 3ds -> DecryptedPartitionX.bin
 		print('Extracting Step 1/3')
-		makedirs(cia_dir, exist_ok=True)
-		proc = run('ctrtool -x --content="%s" "%s"' % (abspath(join(cia_dir, 'Decrypted')), cia_file), stdout=DEVNULL, stderr=PIPE)
-		if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		partitions = list()
-		for decrypted_file in listdir(cia_dir):
-			id = int(decrypted_file[10:14])
-			rename(join(cia_dir, decrypted_file), join(cia_dir, 'DecryptedPartition%d.bin' % id))
-			partitions.append(id)
+		makedirs(game_dir, exist_ok=True)
+		copyfile('3dstool.exe', join(game_dir, '3dstool.exe'))
+		if mode == 'cia':
+			proc = run('ctrtool -x --content="%s" "%s"' % (abspath(join(game_dir, 'Decrypted')), game_file), stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			partitions = list()
+			for decrypted_file in [f for f in listdir(game_dir) if f.startswith('Decrypted')]:
+				id = int(decrypted_file[10:14])
+				rename(join(game_dir, decrypted_file), join(game_dir, 'DecryptedPartition%d.bin' % id))
+				partitions.append(id)
+		elif mode == '3ds':
+			proc = run('3dstool -xtf 3ds "%s" --header HeaderNCCH.bin -0 DecryptedPartition0.bin -1 DecryptedPartition1.bin -2 DecryptedPartition2.bin -6 DecryptedPartition6.bin -7 DecryptedPartition7.bin' % abspath(game_file), cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			partitions = [int(f[18]) for f in listdir(game_dir) if f.startswith('DecryptedPartition')]
 		
 		# step 2: DecryptedPartitionX.bin -> HeaderNCCHX.bin, DecryptedXXX.bin, ...
 		print('Extracting Step 2/3')
-		copyfile('3dstool.exe', join(cia_dir, '3dstool.exe'))
 		if 0 in partitions:
 			print(' ', 'Partition0')
-			proc = run('3dstool -xtf cxi DecryptedPartition0.bin --header HeaderNCCH0.bin --exh DecryptedExHeader.bin --exefs DecryptedExeFS.bin --romfs DecryptedRomFS.bin --logo LogoLZ.bin --plain PlainRGN.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
+			proc = run('3dstool -xtf cxi DecryptedPartition0.bin --header HeaderNCCH0.bin --exh DecryptedExHeader.bin --exefs DecryptedExeFS.bin --romfs DecryptedRomFS.bin --logo LogoLZ.bin --plain PlainRGN.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if 1 in partitions:
 			print(' ', 'Partition1')
-			proc = run('3dstool -xtf cfa DecryptedPartition1.bin --header HeaderNCCH1.bin --romfs DecryptedManual.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
+			proc = run('3dstool -xtf cfa DecryptedPartition1.bin --header HeaderNCCH1.bin --romfs DecryptedManual.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if 2 in partitions:
 			print(' ', 'Partition2')
-			proc = run('3dstool -xtf cfa DecryptedPartition2.bin --header HeaderNCCH2.bin --romfs DecryptedDownloadPlay.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		for id in partitions: remove(join(cia_dir, 'DecryptedPartition%d.bin' % id))
+			proc = run('3dstool -xtf cfa DecryptedPartition2.bin --header HeaderNCCH2.bin --romfs DecryptedDownloadPlay.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		for id in partitions: remove(join(game_dir, 'DecryptedPartition%d.bin' % id))
 		
 		# step 3: DecryptedExeFS.bin -> ExtractedExeFS
 		print('Extracting Step 3/3')
 		if 0 in partitions:
-			proc = run('3dstool -xtf exefs DecryptedExeFS.bin --exefs-dir ExtractedExeFS --header HeaderExeFS.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
-			exefs_dir = join(cia_dir, 'ExtractedExeFS')
+			proc = run('3dstool -xtf exefs DecryptedExeFS.bin --exefs-dir ExtractedExeFS --header HeaderExeFS.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			exefs_dir = join(game_dir, 'ExtractedExeFS')
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
-		remove(join(cia_dir, '3dstool.exe'))
+		remove(join(game_dir, '3dstool.exe'))
 		
 		# success
-		print('Extracted to', cia_dir)
+		print('Extracted to', game_dir)
 		print()
 		return True
 		
@@ -332,26 +344,26 @@ def extractCIA(cia_file):
 		print()
 		return False
 
-def prepareCIA(patch_file, cia_file):
-	""" Copies all files from the original cia to the patch cia folder.
+def prepareGame(patch_file, game_file):
+	""" Copies all files from the original game to the patch game folder.
 		Creates CustomXXX files for all XXX files.
 	"""
 	# check if already exists
-	orig_dir = escapeName(cia_file)
-	cia_dir = escapeName(createName(cia_file, patch_file))
-	if isdir(cia_dir):
-		print('Found', cia_dir)
+	orig_dir = escapeName(game_file)
+	game_dir = escapeName(createName(game_file, patch_file))
+	if isdir(game_dir):
+		print('Found', game_dir)
 		return True
 	print('Copy', orig_dir)
 	
 	# copy folder
-	copytree(orig_dir, cia_dir)
+	copytree(orig_dir, game_dir)
 	
 	# copy files
 	def ct(x, y):
-		if isdir(join(cia_dir, x)): copytree(join(cia_dir, x), join(cia_dir, y))
+		if isdir(join(game_dir, x)): copytree(join(game_dir, x), join(game_dir, y))
 	def cf(x, y):
-		if isfile(join(cia_dir, x)): copyfile(join(cia_dir, x), join(cia_dir, y))
+		if isfile(join(game_dir, x)): copyfile(join(game_dir, x), join(game_dir, y))
 	ct('ExtractedExeFS', 'CustomExeFS')
 	cf('HeaderExeFS.bin', 'CustomHeaderExeFS.bin')
 	cf('DecryptedExeFS.bin', 'CustomExeFS.bin')
@@ -366,57 +378,64 @@ def prepareCIA(patch_file, cia_file):
 	cf('HeaderNCCH2.bin', 'CustomHeaderNCCH2.bin')
 	
 	# success
-	print('Copied to', cia_dir)
+	print('Copied to', game_dir)
 	print()
 	return True
 
-def rebuildCIA(patch_file, cia_file, version = 1024):
-	""" Rebuilds the cia file defined by the given [cia_file] and [patch_file]. """
+def rebuildGame(patch_file, game_file, version = 1024):
+	""" Rebuilds the game file defined by the given [game_file] and [patch_file]. """
 	try:
 		# check if exists
-		rebuilt_cia_file = createName(cia_file, patch_file)
-		cia_dir = escapeName(rebuilt_cia_file)
-		if isfile(rebuilt_cia_file): remove(rebuilt_cia_file)
-		print('Rebuild', cia_dir)
+		rebuilt_game_file = createName(game_file, patch_file)
+		game_dir = escapeName(rebuilt_game_file)
+		if isfile(rebuilt_game_file): remove(rebuilt_game_file)
+		print('Rebuild', game_dir)
+		mode = splitext(game_file)[1][1:].lower()
 		
 		# step 1: CustomExeFS -> CustomExeFS.bin
 		print('Rebuilding Step 1/3')
-		copyfile('3dstool.exe', join(cia_dir, '3dstool.exe'))
-		exefs_dir = join(cia_dir, 'CustomExeFS')
-		if isdir(exefs_dir) and isfile(join(cia_dir, 'CustomHeaderExeFS.bin')):
+		copyfile('3dstool.exe', join(game_dir, '3dstool.exe'))
+		exefs_dir = join(game_dir, 'CustomExeFS')
+		if isdir(exefs_dir) and isfile(join(game_dir, 'CustomHeaderExeFS.bin')):
 			if isfile(join(exefs_dir, 'banner.bin')): rename(join(exefs_dir, 'banner.bin'), join(exefs_dir, 'banner.bnr'))
 			if isfile(join(exefs_dir, 'icon.bin')):   rename(join(exefs_dir, 'icon.bin'),   join(exefs_dir, 'icon.icn'))
-			proc = run('3dstool -ctf exefs CustomExeFS.bin --exefs-dir CustomExeFS --header CustomHeaderExeFS.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
+			proc = run('3dstool -ctf exefs CustomExeFS.bin --exefs-dir CustomExeFS --header CustomHeaderExeFS.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
 		
 		# step 2: CustomHeaderNCCHX.bin, CustomDecryptedXXX.bin, ... -> DecryptedPartitionX.bin
 		print('Rebuilding Step 2/3')
-		if all(isfile(join(cia_dir, f)) for f in ['CustomHeaderNCCH0.bin', 'CustomExHeader.bin', 'CustomExeFS.bin', 'CustomRomFS.bin', 'CustomLogoLZ.bin', 'CustomPlainRGN.bin']):
+		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH0.bin', 'CustomExHeader.bin', 'CustomExeFS.bin', 'CustomRomFS.bin', 'CustomLogoLZ.bin', 'CustomPlainRGN.bin']):
 			print(' ', 'Partition0')
-			proc = run('3dstool -ctf cxi CustomPartition0.bin --header CustomHeaderNCCH0.bin --exh CustomExHeader.bin --exefs CustomExeFS.bin --romfs CustomRomFS.bin --logo CustomLogoLZ.bin --plain CustomPlainRGN.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		if all(isfile(join(cia_dir, f)) for f in ['CustomHeaderNCCH1.bin', 'CustomManual.bin']):
+			proc = run('3dstool -ctf cxi CustomPartition0.bin --header CustomHeaderNCCH0.bin --exh CustomExHeader.bin --exefs CustomExeFS.bin --romfs CustomRomFS.bin --logo CustomLogoLZ.bin --plain CustomPlainRGN.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH1.bin', 'CustomManual.bin']):
 			print(' ', 'Partition1')
-			proc = run('3dstool -ctf cfa CustomPartition1.bin --header CustomHeaderNCCH1.bin --romfs CustomManual.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		if all(isfile(join(cia_dir, f)) for f in ['CustomHeaderNCCH2.bin', 'CustomDownloadPlay.bin']):
+			proc = run('3dstool -ctf cfa CustomPartition1.bin --header CustomHeaderNCCH1.bin --romfs CustomManual.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH2.bin', 'CustomDownloadPlay.bin']):
 			print(' ', 'Partition2')
-			proc = run('3dstool -ctf cfa CustomPartition2.bin --header CustomHeaderNCCH2.bin --romfs CustomDownloadPlay.bin', cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
-			if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		remove(join(cia_dir, '3dstool.exe'))
+			proc = run('3dstool -ctf cfa CustomPartition2.bin --header CustomHeaderNCCH2.bin --romfs CustomDownloadPlay.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		remove(join(game_dir, '3dstool.exe'))
 		
-		# step 3: DecryptedPartitionX.bin -> CIA
+		# step 3: DecryptedPartitionX.bin -> cia / 3ds
 		print('Rebuilding Step 3/3')
-		print(' ', 'CIA', int2version(version))
-		contents = ['-content "%s":%s:%s' % (join(cia_dir, f), f[15], f[15]) for f in listdir(cia_dir) if f.startswith('CustomPartition')]
-		proc = run('makerom -f cia %s -ver %d -o "%s" -target p -ignoresign' % (' '.join(contents), version, rebuilt_cia_file), stdout=DEVNULL, stderr=PIPE)
-		if proc.returncode != 0: raise Exception(proc.stderr.decode())
-		for file in [f for f in listdir(cia_dir) if f.startswith('CustomPartition')]: remove(join(cia_dir, file))
+		if mode == 'cia':
+			print(' ', 'CIA', int2version(version))
+			contents = ['-content "%s":%s:%s' % (join(game_dir, f), f[15], f[15]) for f in listdir(game_dir) if f.startswith('CustomPartition')]
+			proc = run('makerom -f cia %s -ver %d -o "%s" -target p -ignoresign' % (' '.join(contents), version, rebuilt_game_file), stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		elif mode == '3ds':
+			contents = ['--header "%s"' % join(game_dir, 'HeaderNCCH.bin')]
+			contents += ['-%s "%s"' % (f[15], join(game_dir, f)) for f in listdir(game_dir) if f.startswith('CustomPartition')]
+			proc = run('3dstool -ctf 3ds "%s" --header HeaderNCCH.bin %s' % (rebuilt_game_file, ' '.join(contents)), stdout=PIPE, stderr=STDOUT)
+			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+		for file in [f for f in listdir(game_dir) if f.startswith('CustomPartition')]: remove(join(game_dir, file))
 		
 		# success
-		print('Rebuilt', rebuilt_cia_file)
+		print('Rebuilt', rebuilt_game_file)
 		print()
 		return True
 		
@@ -426,35 +445,35 @@ def rebuildCIA(patch_file, cia_file, version = 1024):
 		print()
 		return False
 
-def applyPatches(patch_file, cia_file, patches, ignore_incompatible_patches = False):
-	""" Extracts the patches in [patch_file] and applies them to the extracted [cia_file].
+def applyPatches(patch_file, game_file, patches, ignore_incompatible_patches = False):
+	""" Extracts the patches in [patch_file] and applies them to the extracted [game_file].
 		Applies the patches to the files as defined in [patches].
 	"""
 	try:
-		cia_dir = escapeName(createName(cia_file, patch_file))
-		print('Apply', patch_file, '→', cia_file)
+		game_dir = escapeName(createName(game_file, patch_file))
+		print('Apply', patch_file, '→', game_file)
 		
 		# extract patches
 		print('Extract', patch_file)
-		patch_dir = join(cia_dir, 'Patches')
+		patch_dir = join(game_dir, 'Patches')
 		with ZipFile(patch_file, 'r') as file:
 			file.extractall(patch_dir)
 		
 		# apply patches
-		copyfile('xdelta.exe', join(cia_dir, 'xdelta.exe'))
+		copyfile('xdelta.exe', join(game_dir, 'xdelta.exe'))
 		for patch in listdir(patch_dir):
 			if patch not in patches: raise Exception('Unknown patch', patch)
 			print('Apply', patch)
 			orig, custom = patches[patch]
-			proc = run('xdelta -f -d -s %s Patches/%s %s' % (orig, patch, custom), cwd=cia_dir, stdout=DEVNULL, stderr=PIPE)
+			proc = run('xdelta -f -d -s %s Patches/%s %s' % (orig, patch, custom), cwd=game_dir, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0:
 				if ignore_incompatible_patches:
-					print(proc.stderr.decode().strip())
+					print(proc.stdout.decode().strip())
 					print('WARNING: Failed to apply', patch)
-				else: raise Exception(proc.stderr.decode())
+				else: raise Exception(proc.stdout.decode())
 		
 		# clean up
-		remove(join(cia_dir, 'xdelta.exe'))
+		remove(join(game_dir, 'xdelta.exe'))
 		rmtree(patch_dir)
 		print('Applied', patch_file)
 		print()
@@ -479,9 +498,9 @@ def cleanUp(mappings = None, files = None):
 		print('Delete', file)
 		remove(file)
 	if mappings is not None: # delete mappings
-		for patch_file, cia_file, _ in mappings:
-			rmdir(escapeName(cia_file))
-			rmdir(escapeName(createName(cia_file, patch_file)))
+		for patch_file, game_file, _ in mappings:
+			rmdir(escapeName(game_file))
+			rmdir(escapeName(createName(game_file, patch_file)))
 	else: # delete all
 		for dir in [f for f in listdir('.') if isdir(f)]:
 			rmdir(dir)
@@ -496,17 +515,21 @@ class ValidateMapping(argparse.Action):
 	"""
 	def __call__(self, parser, args, values, option_string=None):
 		# unpack values
-		patch, cia, version = values
+		patch, game, version = values
 		# check values
 		if not isfile(patch): raise FileNotFoundError('No such file: \'%s\'' % patch)
-		if not isfile(cia):   raise FileNotFoundError('No such file: \'%s\'' % cia)
+		if splitext(patch)[1] != '.zip':
+			raise ValueError('Unknown patch file format: \'%s\'' % splitext(game)[1])
+		if not isfile(game):  raise FileNotFoundError('No such file: \'%s\'' % game)
+		if splitext(game)[1].lower() not in ['.cia', '.3ds']:
+			raise ValueError('Unknown game file format: \'%s\'' % splitext(game)[1])
 		if not re.match('^v\d\.\d(\.\d)?$', version) and not version.isdigit():
 			raise ValueError('Not a valid version: \'%s\'' % version)
 		# convert version to int
 		ver = int(version) if version.isdigit() else version2int(version)
 		# add current mapping to list of mappings
 		if not hasattr(self, 'mappings'): self.mappings = list()
-		self.mappings.append((patch, cia, ver))
+		self.mappings.append((patch, game, ver))
 		# set attribute
 		setattr(args, self.dest, self.mappings)
 
@@ -518,8 +541,8 @@ def main():
 		
 		# argparse
 		parser = argparse.ArgumentParser()
-		parser.add_argument('--mapping', metavar=('patch', 'cia', 'version'), dest='mappings', nargs=3, action=ValidateMapping, \
-			help='Defines which patch file should be used to patch which cia file. Sets the version of the patched cia file as a string (e.g. v1.0.0) or integer (e.g. 1024). Can be used multiple times.')
+		parser.add_argument('--mapping', metavar=('patch', 'game', 'version'), dest='mappings', nargs=3, action=ValidateMapping, \
+			help='Defines which patch file should be used to patch which game file. Can be used multiple times. When patching a CIA file specify the version as a string (v1.0.0) or integer (1024). When patching a 3DS file the version will be ignored.')
 		parser.add_argument('--ignore-incompatible-patches', dest='ignore_incompatible_patches', action='store_const', \
 			const=True, default=False, \
 			help='Continue patching when a patch cannot be applied instead of stopping the process.')
@@ -527,7 +550,7 @@ def main():
 			default=[r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip'], \
 			help='The direct download link to xdelta. Supported file types are zip and exe.')
 		parser.add_argument('--3dstool-url', metavar='url', dest='dstool_url', nargs=1, \
-			default=[r'https://github.com/dnasdw/3dstool/releases/download/v1.2.6/3dstool.zip'], \
+			default=[r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip'], \
 			help='The direct download link to 3dstool. Supported file types are zip and exe.')
 		parser.add_argument('--ctrtool-url', metavar='url', dest='ctrtool_url', nargs=1, \
 			default=[r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_x86_64.zip'], \
@@ -598,51 +621,51 @@ def main():
 		downloadExe(args.makerom_url[0], 'makerom.exe')
 		print()
 		
-		print('~~ Extract CIAs ~~')
+		print('~~ Extract Games ~~')
 		fails = list()
-		for cia_file in {cia for _, cia, _ in mappings}:
-			success = extractCIA(cia_file)
-			if not success: fails.append(cia_file)
+		for game_file in sorted({game for _, game, _ in mappings}, key=lambda x: next(i for i, (_, x2, _) in enumerate(mappings) if x == x2)):
+			success = extractGame(game_file)
+			if not success: fails.append(game_file)
 		print()
 		
-		print('~~ Patch CIAs ~~')
-		for patch_file, cia_file, _ in mappings:
-			if cia_file in fails:
-				print('Skip', patch_file, '→', cia_file)
-				fails.append((patch_file, cia_file))
+		print('~~ Patch Games ~~')
+		for patch_file, game_file, _ in mappings:
+			if game_file in fails:
+				print('Skip', patch_file, '→', game_file)
+				fails.append((patch_file, game_file))
 				continue
-			prepareCIA(patch_file, cia_file)
-			success = applyPatches(patch_file, cia_file, patches, args.ignore_incompatible_patches)
-			if not success: fails.append((patch_file, cia_file))
+			prepareGame(patch_file, game_file)
+			success = applyPatches(patch_file, game_file, patches, args.ignore_incompatible_patches)
+			if not success: fails.append((patch_file, game_file))
 		print()
 		
-		print('~~ Rebuild CIAs ~~')
-		for patch_file, cia_file, version in mappings:
-			if (patch_file, cia_file) in fails:
-				print('Skip', patch_file, '→', cia_file)
+		print('~~ Rebuild Games ~~')
+		for patch_file, game_file, version in mappings:
+			if (patch_file, game_file) in fails:
+				print('Skip', patch_file, '→', game_file)
 				continue
-			success = rebuildCIA(patch_file, cia_file, version)
-			if not success: fails.append((patch_file, cia_file))
+			success = rebuildGame(patch_file, game_file, version)
+			if not success: fails.append((patch_file, game_file))
 		print()
 		
 		print('~~ Summary ~~')
-		for patch_file, cia_file, _ in mappings:
-			if (patch_file, cia_file) in fails: print('Failed', patch_file, '→', cia_file)
-			else: print('Created', createName(cia_file, patch_file))
+		for patch_file, game_file, _ in mappings:
+			if (patch_file, game_file) in fails: print('Failed', patch_file, '→', game_file)
+			else: print('Created', createName(game_file, patch_file))
+		
+		print()
+		command = input('Finished. Clean up? [y/n/all] ').strip()
+		if command in ['y', 'all']:
+			print()
+			print('~~ Clean Up ~~')
+			if command == 'y': cleanUp(mappings=mappings)
+			else: cleanUp(mappings=None, files=['xdelta.exe', '3dstool.exe', 'ctrtool.exe', 'makerom.exe'])
+			print()
+			input('Press Enter to exit...')
 		
 	except Exception as e:
 		import traceback
 		traceback.print_exc()
-	
-	print()
-	command = input('Finished. Clean up? [y/n/all] ').strip()
-	if command in ['y', 'all']:
-		print()
-		print('~~ Clean Up ~~')
-		if command == 'y': cleanUp(mappings=mappings)
-		else: cleanUp(mappings=None, files=['xdelta.exe', '3dstool.exe', 'ctrtool.exe', 'makerom.exe'])
-		print()
-		input('Press Enter to exit...')
 
 if __name__ == '__main__':
 	main()
