@@ -1,3 +1,6 @@
+[![](https://img.shields.io/github/v/release/Ich73/GamePatcher?include_prereleases&label=Release)](https://github.com/Ich73/GamePatcher/releases/latest)
+[![](https://img.shields.io/github/downloads/Ich73/GamePatcher/total?label=Downloads)](https://github.com/Ich73/GamePatcher/releases)
+[![](https://img.shields.io/github/license/Ich73/GamePatcher?label=License)](/LICENSE)
 # Game Patcher
 Game Patcher is a small program to simplify the workflow of patching CIA and 3DS files.  
   
