@@ -4,5 +4,6 @@
 !/.gitignore
 !/LICENSE
 !/README.md
+!/requirements.txt
 !/GamePatcher.py
 !/GamePatcher.spec
