@@ -15,9 +15,33 @@ import json
 from subprocess import run, STDOUT, PIPE
 from urllib.request import urlopen
 import webbrowser
+import platform
 
 VERSION = 'v1.1.0'
 REPOSITORY = r'Ich73/GamePatcher'
+
+TOOLS = {
+	'xdelta': {
+		'version': '3.1.0',
+		'win64': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip',
+		'win32': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-i686.exe.zip',
+	},
+	'3dstool': {
+		'version': '1.1.0',
+		'win64': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip',
+		'win32': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip',
+	},
+	'ctrtool': {
+		'version': '0.7',
+		'win64': r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_x86_64.zip',
+		'win32': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_i686.zip',
+	},
+	'makerom': {
+		'version': '0.17',
+		'win64': r'https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.17/makerom-v0.17-win_x86_64.zip',
+		'win32': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/makerom-v0.17/makerom-v0.17-win_i686.zip',
+	}
+}
 
 
 ###########
@@ -539,6 +563,11 @@ def main():
 		if len(sys.argv) <= 1:
 			if checkUpdates(): return
 		
+		# check os
+		opSys = 'win' # platform.system(), only win support
+		if '64' in platform.machine(): opSys += '64'
+		else: opSys += '32'
+		
 		# argparse
 		parser = argparse.ArgumentParser()
 		parser.add_argument('--mapping', metavar=('patch', 'game', 'version'), dest='mappings', nargs=3, action=ValidateMapping, \
@@ -547,16 +576,16 @@ def main():
 			const=True, default=False, \
 			help='Continue patching when a patch cannot be applied instead of stopping the process.')
 		parser.add_argument('--xdelta-url', metavar='url', dest='xdelta_url', nargs=1, \
-			default=[r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip'], \
+			default=[TOOLS['xdelta'][opSys]], \
 			help='The direct download link to xdelta. Supported file types are zip and exe.')
 		parser.add_argument('--3dstool-url', metavar='url', dest='dstool_url', nargs=1, \
-			default=[r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip'], \
+			default=[TOOLS['3dstool'][opSys]], \
 			help='The direct download link to 3dstool. Supported file types are zip and exe.')
 		parser.add_argument('--ctrtool-url', metavar='url', dest='ctrtool_url', nargs=1, \
-			default=[r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_x86_64.zip'], \
+			default=[TOOLS['ctrtool'][opSys]], \
 			help='The direct download link to ctrtool. Supported file types are zip and exe.')
 		parser.add_argument('--makerom-url', metavar='url', dest='makerom_url', nargs=1, \
-			default=[r'https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.17/makerom-v0.17-win_x86_64.zip'], \
+			default=[TOOLS['makerom'][opSys]], \
 			help='The direct download link to makerom. Supported file types are zip and exe.')
 		parser.add_argument('--romfs', metavar='file', dest='patch_romfs', nargs=1, default='RomFS.xdelta', \
 			help='The name of the patch file for DecryptedRomFS.bin')
