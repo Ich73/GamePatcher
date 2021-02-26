@@ -17,7 +17,7 @@ from urllib.request import urlopen
 import webbrowser
 import platform
 
-VERSION = 'v1.1.0'
+VERSION = 'v1.1.1'
 REPOSITORY = r'Ich73/GamePatcher'
 
 TOOLS = {

@@ -12,7 +12,7 @@ It uses the following tools:
 
 
 ## Using Game Patcher
-You can download the newest version as an executable from the [Release Page](https://github.com/Ich73/GamePatcher/releases/latest). Copy `GamePatcher.exe` to the directory containing the dumped CIA or 3DS file of your game and the patches as a zip archive and run it.  
+You can download the newest version as an executable from the [Release Page](https://github.com/Ich73/GamePatcher/releases/latest). Extract the archive and copy `GamePatcher.exe` to the directory containing the dumped CIA or 3DS file of your game and the patches as a zip archive and run it.  
   
 It supports regular CIAs, update CIAs and 3DS files and tries to automatically determine which `.zip` patches should be used to patch which `.cia` and `.3ds` games. The required tools are downloaded automatically.  
   
