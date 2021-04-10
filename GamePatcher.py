@@ -6,16 +6,19 @@
 import argparse
 import sys
 import re
-from os import system, listdir, makedirs, rename, remove
+from os import system, listdir, makedirs, rename, remove, stat, chmod, name as os_name
 from os.path import join, abspath, basename, splitext, isfile, isdir, getsize
 from shutil import copyfile, copytree, rmtree
+from stat import S_IXUSR, S_IXGRP, S_IXOTH
 from io import BytesIO
 from zipfile import ZipFile
+from tarfile import open as TarFile
 import json
 from subprocess import run, STDOUT, PIPE
 from urllib.request import urlopen
 import webbrowser
 import platform
+import ssl
 
 VERSION = 'v1.1.1'
 REPOSITORY = r'Ich73/GamePatcher'
@@ -23,23 +26,27 @@ REPOSITORY = r'Ich73/GamePatcher'
 TOOLS = {
 	'xdelta': {
 		'version': '3.1.0',
-		'win64': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip',
-		'win32': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-i686.exe.zip',
+		'win64': {'url': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-x86_64.exe.zip', 'exe': 'xdelta.exe'},
+		'win32': {'url': r'https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0-i686.exe.zip', 'exe': 'xdelta.exe'},
+		'linux64': {'url': r'https://github.com/Ich73/xdelta-LinuxBuilds/releases/download/v3.1.0/xdelta3-linux_x86_64.zip', 'exe': 'xdelta'},
 	},
 	'3dstool': {
 		'version': '1.1.0',
-		'win64': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip',
-		'win32': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip',
+		'win64': {'url': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip', 'exe': '3dstool.exe'},
+		'win32': {'url': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool.zip', 'exe': '3dstool.exe'},
+		'linux64': {'url': r'https://github.com/dnasdw/3dstool/releases/download/v1.1.0/3dstool_linux_x86_64.tar.gz', 'exe': '3dstool'},
 	},
 	'ctrtool': {
 		'version': '0.7',
-		'win64': r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_x86_64.zip',
-		'win32': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_i686.zip',
+		'win64': {'url': r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_x86_64.zip', 'exe': 'ctrtool.exe'},
+		'win32': {'url': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/ctrtool-v0.7/ctrtool-v0.7-win_i686.zip', 'exe': 'ctrtool.exe'},
+		'linux64': {'url': r'https://github.com/3DSGuy/Project_CTR/releases/download/ctrtool-v0.7/ctrtool-v0.7-ubuntu_x86_64.zip', 'exe': 'ctrtool'},
 	},
 	'makerom': {
 		'version': '0.17',
-		'win64': r'https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.17/makerom-v0.17-win_x86_64.zip',
-		'win32': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/makerom-v0.17/makerom-v0.17-win_i686.zip',
+		'win64': {'url': r'https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.17/makerom-v0.17-win_x86_64.zip', 'exe': 'makerom.exe'},
+		'win32': {'url': r'https://github.com/Ich73/Project-CTR-WindowsBuilds/releases/download/makerom-v0.17/makerom-v0.17-win_i686.zip', 'exe': 'makerom.exe'},
+		'linux64': {'url': r'https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.17/makerom-v0.17-ubuntu_x86_64.zip', 'exe': 'makerom'},
 	}
 }
 
@@ -71,7 +78,7 @@ def checkUpdates():
 	try:
 		# query api
 		latest = r'https://api.github.com/repos/%s/releases/latest' % REPOSITORY
-		with urlopen(latest, timeout = 1) as url:
+		with urlopen(latest, timeout = 1, context=ssl._create_unverified_context()) as url:
 			data = json.loads(url.read().decode())
 		tag = data['tag_name']
 		link = data['html_url']
@@ -119,7 +126,7 @@ m = 1 # left margin
 w = 64 # width of title box
 
 def printTitleBox():
-	system('cls')
+	system('cls' if os_name in ['nt', 'dos'] else 'clear')
 	def title(msg=''): print(' '*m + '║ ' + ' '*int((w-len(msg))/2) + msg + ' '*(w-len(msg)-int((w-len(msg))/2)) + ' ║')
 	print()
 	print(' '*m + '╔' + '═'*(w+2) + '╗')
@@ -266,10 +273,10 @@ def askMappings():
 	# return all mappings
 	return mappings
 
-def downloadExe(download_url, filename):
-	""" Downloads an exe file form the given [download_url], puts it in the current directory
-		and renames it to [filename].
-		If the download is a zip file it uses the first exe file found in the archive.
+def downloadTool(download_url, filename):
+	""" Downloads an executable from the given [download_url],
+		puts it in the current directory and renames it to [filename].
+		If the download is a zip or tar file it uses the first executable found in the archive.
 	"""
 	# check if already exists
 	if isfile(filename):
@@ -280,30 +287,42 @@ def downloadExe(download_url, filename):
 	print('Downloading', basename(download_url))
 	print(' ', 'from', download_url)
 	type = splitext(download_url)[1]
-	with urlopen(download_url) as url: data = url.read()
+	with urlopen(download_url, context=ssl._create_unverified_context()) as url: data = url.read()
 	
-	# zip file
+	# zip archive
 	if type == '.zip':
 		with ZipFile(BytesIO(data)) as zip:
-			file = next((file for file in zip.infolist() if splitext(file.filename)[1] == '.exe'), None)
-			if not file: raise Exception('The downloaded zip file does not contain an exe file.')
+			file = next((file for file in zip.infolist() if splitext(file.filename)[1] == splitext(filename)[1]), None)
+			if not file: raise Exception('The downloaded zip archive does not contain a suitable executable.')
 			print('Extracting', basename(file.filename))
 			zip.extract(file)
 			rename(basename(file.filename), filename)
 	
-	# exe
-	elif type == '.exe':
+	# tar archive
+	elif type in ['.tar', '.gz']:
+		with TarFile(fileobj=BytesIO(data)) as tar:
+			file = next((file for file in tar.getmembers() if splitext(file.name)[1] == splitext(filename)[1]), None)
+			if not file: raise Exception('The downloaded tar archive does not contain a suitable executable.')
+			print('Extracting', basename(file.name))
+			tar.extract(file)
+			rename(basename(file.name), filename)
+	
+	# executable
+	elif type in ['.exe', '']:
 		with open(filename, 'wb') as file:
 			file.write(data)
 	
 	# not supported
-	else: raise Exception('The download link does not point towards a zip or exe file.')
+	else: raise Exception('The download link does not point towards a zip archive, tar archive or executable.')
+	
+	# make executable
+	chmod(filename, stat(filename).st_mode | S_IXUSR | S_IXGRP | S_IXOTH)
 	
 	# success
 	print('Downloaded', filename)
 	print()
 
-def extractGame(game_file):
+def extractGame(game_file, dstool, ctrtool):
 	""" Extracts the given [game_file]. Supports .cia and .3ds files. """
 	try:
 		# check if already exists
@@ -317,9 +336,8 @@ def extractGame(game_file):
 		# step 1: cia / 3ds -> DecryptedPartitionX.bin
 		print('Extracting Step 1/3')
 		makedirs(game_dir, exist_ok=True)
-		copyfile('3dstool.exe', join(game_dir, '3dstool.exe'))
 		if mode == 'cia':
-			proc = run('ctrtool -x --content="%s" "%s"' % (abspath(join(game_dir, 'Decrypted')), game_file), stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -x --content="%s" "%s"' % (abspath(ctrtool), abspath(join(game_dir, 'Decrypted')), abspath(game_file)), shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 			partitions = list()
 			for decrypted_file in [f for f in listdir(game_dir) if f.startswith('Decrypted')]:
@@ -327,7 +345,7 @@ def extractGame(game_file):
 				rename(join(game_dir, decrypted_file), join(game_dir, 'DecryptedPartition%d.bin' % id))
 				partitions.append(id)
 		elif mode == '3ds':
-			proc = run('3dstool -xtf 3ds "%s" --header HeaderNCCH.bin -0 DecryptedPartition0.bin -1 DecryptedPartition1.bin -2 DecryptedPartition2.bin -6 DecryptedPartition6.bin -7 DecryptedPartition7.bin' % abspath(game_file), cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -xtf 3ds "%s" --header HeaderNCCH.bin -0 DecryptedPartition0.bin -1 DecryptedPartition1.bin -2 DecryptedPartition2.bin -6 DecryptedPartition6.bin -7 DecryptedPartition7.bin' % (abspath(dstool), abspath(game_file)), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 			partitions = [int(f[18]) for f in listdir(game_dir) if f.startswith('DecryptedPartition')]
 		
@@ -335,27 +353,26 @@ def extractGame(game_file):
 		print('Extracting Step 2/3')
 		if 0 in partitions:
 			print(' ', 'Partition0')
-			proc = run('3dstool -xtf cxi DecryptedPartition0.bin --header HeaderNCCH0.bin --exh DecryptedExHeader.bin --exefs DecryptedExeFS.bin --romfs DecryptedRomFS.bin --logo LogoLZ.bin --plain PlainRGN.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -xtf cxi DecryptedPartition0.bin --header HeaderNCCH0.bin --exh DecryptedExHeader.bin --exefs DecryptedExeFS.bin --romfs DecryptedRomFS.bin --logo LogoLZ.bin --plain PlainRGN.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if 1 in partitions:
 			print(' ', 'Partition1')
-			proc = run('3dstool -xtf cfa DecryptedPartition1.bin --header HeaderNCCH1.bin --romfs DecryptedManual.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -xtf cfa DecryptedPartition1.bin --header HeaderNCCH1.bin --romfs DecryptedManual.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if 2 in partitions:
 			print(' ', 'Partition2')
-			proc = run('3dstool -xtf cfa DecryptedPartition2.bin --header HeaderNCCH2.bin --romfs DecryptedDownloadPlay.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -xtf cfa DecryptedPartition2.bin --header HeaderNCCH2.bin --romfs DecryptedDownloadPlay.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		for id in partitions: remove(join(game_dir, 'DecryptedPartition%d.bin' % id))
 		
 		# step 3: DecryptedExeFS.bin -> ExtractedExeFS
 		print('Extracting Step 3/3')
-		if 0 in partitions:
-			proc = run('3dstool -xtf exefs DecryptedExeFS.bin --exefs-dir ExtractedExeFS --header HeaderExeFS.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+		if isfile(join(game_dir, 'DecryptedExeFS.bin')):
+			proc = run('"%s" -xtf exefs DecryptedExeFS.bin --exefs-dir ExtractedExeFS --header HeaderExeFS.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 			exefs_dir = join(game_dir, 'ExtractedExeFS')
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
-		remove(join(game_dir, '3dstool.exe'))
 		
 		# success
 		print('Extracted to', game_dir)
@@ -406,8 +423,10 @@ def prepareGame(patch_file, game_file):
 	print()
 	return True
 
-def rebuildGame(patch_file, game_file, version = 1024):
-	""" Rebuilds the game file defined by the given [game_file] and [patch_file]. """
+def rebuildGame(patch_file, game_file, version, dstool, makerom):
+	""" Rebuilds the game file defined by the given [game_file] and [patch_file].
+		Sets the version of the cia file to [version].
+	"""
 	try:
 		# check if exists
 		rebuilt_game_file = createName(game_file, patch_file)
@@ -418,43 +437,44 @@ def rebuildGame(patch_file, game_file, version = 1024):
 		
 		# step 1: CustomExeFS -> CustomExeFS.bin
 		print('Rebuilding Step 1/3')
-		copyfile('3dstool.exe', join(game_dir, '3dstool.exe'))
 		exefs_dir = join(game_dir, 'CustomExeFS')
 		if isdir(exefs_dir) and isfile(join(game_dir, 'CustomHeaderExeFS.bin')):
 			if isfile(join(exefs_dir, 'banner.bin')): rename(join(exefs_dir, 'banner.bin'), join(exefs_dir, 'banner.bnr'))
 			if isfile(join(exefs_dir, 'icon.bin')):   rename(join(exefs_dir, 'icon.bin'),   join(exefs_dir, 'icon.icn'))
-			proc = run('3dstool -ctf exefs CustomExeFS.bin --exefs-dir CustomExeFS --header CustomHeaderExeFS.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -ctf exefs CustomExeFS.bin --exefs-dir CustomExeFS --header CustomHeaderExeFS.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
 		
-		# step 2: CustomHeaderNCCHX.bin, CustomDecryptedXXX.bin, ... -> DecryptedPartitionX.bin
+		# step 2: CustomHeaderNCCHX.bin, CustomDecryptedXXX.bin, ... -> CustomPartitionX.bin
 		print('Rebuilding Step 2/3')
-		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH0.bin', 'CustomExHeader.bin', 'CustomExeFS.bin', 'CustomRomFS.bin', 'CustomLogoLZ.bin', 'CustomPlainRGN.bin']):
+		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH0.bin', 'CustomExHeader.bin', 'CustomExeFS.bin', 'CustomRomFS.bin']):
 			print(' ', 'Partition0')
-			proc = run('3dstool -ctf cxi CustomPartition0.bin --header CustomHeaderNCCH0.bin --exh CustomExHeader.bin --exefs CustomExeFS.bin --romfs CustomRomFS.bin --logo CustomLogoLZ.bin --plain CustomPlainRGN.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			arguments = ['--header CustomHeaderNCCH0.bin', '--exh CustomExHeader.bin', '--exefs CustomExeFS.bin', '--romfs CustomRomFS.bin']
+			if isfile(join(game_dir, 'CustomLogoLZ.bin')):   arguments.append('--logo CustomLogoLZ.bin')
+			if isfile(join(game_dir, 'CustomPlainRGN.bin')): arguments.append('--plain CustomPlainRGN.bin')
+			proc = run('"%s" -ctf cxi CustomPartition0.bin %s' % (abspath(dstool), ' '.join(arguments)), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH1.bin', 'CustomManual.bin']):
 			print(' ', 'Partition1')
-			proc = run('3dstool -ctf cfa CustomPartition1.bin --header CustomHeaderNCCH1.bin --romfs CustomManual.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -ctf cfa CustomPartition1.bin --header CustomHeaderNCCH1.bin --romfs CustomManual.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH2.bin', 'CustomDownloadPlay.bin']):
 			print(' ', 'Partition2')
-			proc = run('3dstool -ctf cfa CustomPartition2.bin --header CustomHeaderNCCH2.bin --romfs CustomDownloadPlay.bin', cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -ctf cfa CustomPartition2.bin --header CustomHeaderNCCH2.bin --romfs CustomDownloadPlay.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
-		remove(join(game_dir, '3dstool.exe'))
 		
-		# step 3: DecryptedPartitionX.bin -> cia / 3ds
+		# step 3: CustomPartitionX.bin -> cia / 3ds
 		print('Rebuilding Step 3/3')
 		if mode == 'cia':
 			print(' ', 'CIA', int2version(version))
-			contents = ['-content "%s":%s:%s' % (join(game_dir, f), f[15], f[15]) for f in listdir(game_dir) if f.startswith('CustomPartition')]
-			proc = run('makerom -f cia %s -ver %d -o "%s" -target p -ignoresign' % (' '.join(contents), version, rebuilt_game_file), stdout=PIPE, stderr=STDOUT)
+			contents = ['-content "%s":%s:%s' % (abspath(join(game_dir, f)), f[15], f[15]) for f in listdir(game_dir) if f.startswith('CustomPartition')]
+			proc = run('"%s" -f cia %s -ver %d -o "%s" -target p -ignoresign' % (abspath(makerom), ' '.join(contents), version, abspath(rebuilt_game_file)), shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		elif mode == '3ds':
-			contents = ['--header "%s"' % join(game_dir, 'HeaderNCCH.bin')]
-			contents += ['-%s "%s"' % (f[15], join(game_dir, f)) for f in listdir(game_dir) if f.startswith('CustomPartition')]
-			proc = run('3dstool -ctf 3ds "%s" --header HeaderNCCH.bin %s' % (rebuilt_game_file, ' '.join(contents)), stdout=PIPE, stderr=STDOUT)
+			contents = ['--header "%s"' % abspath(join(game_dir, 'HeaderNCCH.bin'))]
+			contents += ['-%s "%s"' % (f[15], abspath(join(game_dir, f))) for f in listdir(game_dir) if f.startswith('CustomPartition')]
+			proc = run('"%s" -ctf 3ds "%s" --header HeaderNCCH.bin %s' % (abspath(dstool), abspath(rebuilt_game_file), ' '.join(contents)), shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0: raise Exception(proc.stdout.decode())
 		for file in [f for f in listdir(game_dir) if f.startswith('CustomPartition')]: remove(join(game_dir, file))
 		
@@ -469,7 +489,7 @@ def rebuildGame(patch_file, game_file, version = 1024):
 		print()
 		return False
 
-def applyPatches(patch_file, game_file, patches, ignore_incompatible_patches = False):
+def applyPatches(patch_file, game_file, patches, xdelta, ignore_incompatible_patches = False):
 	""" Extracts the patches in [patch_file] and applies them to the extracted [game_file].
 		Applies the patches to the files as defined in [patches].
 	"""
@@ -484,12 +504,11 @@ def applyPatches(patch_file, game_file, patches, ignore_incompatible_patches = F
 			file.extractall(patch_dir)
 		
 		# apply patches
-		copyfile('xdelta.exe', join(game_dir, 'xdelta.exe'))
 		for patch in listdir(patch_dir):
 			if patch not in patches: raise Exception('Unknown patch', patch)
 			print('Apply', patch)
 			orig, custom = patches[patch]
-			proc = run('xdelta -f -d -s %s Patches/%s %s' % (orig, patch, custom), cwd=game_dir, stdout=PIPE, stderr=STDOUT)
+			proc = run('"%s" -f -d -s %s Patches/%s %s' % (abspath(xdelta), orig, patch, custom), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0:
 				if ignore_incompatible_patches:
 					print(proc.stdout.decode().strip())
@@ -497,7 +516,6 @@ def applyPatches(patch_file, game_file, patches, ignore_incompatible_patches = F
 				else: raise Exception(proc.stdout.decode())
 		
 		# clean up
-		remove(join(game_dir, 'xdelta.exe'))
 		rmtree(patch_dir)
 		print('Applied', patch_file)
 		print()
@@ -564,7 +582,8 @@ def main():
 			if checkUpdates(): return
 		
 		# check os
-		opSys = 'win' # platform.system(), only win support
+		if 'windows' in platform.system().lower(): opSys = 'win'
+		else: opSys = 'linux'
 		if '64' in platform.machine(): opSys += '64'
 		else: opSys += '32'
 		
@@ -576,16 +595,16 @@ def main():
 			const=True, default=False, \
 			help='Continue patching when a patch cannot be applied instead of stopping the process.')
 		parser.add_argument('--xdelta-url', metavar='url', dest='xdelta_url', nargs=1, \
-			default=[TOOLS['xdelta'][opSys]], \
+			default=[TOOLS['xdelta'][opSys]['url']], \
 			help='The direct download link to xdelta. Supported file types are zip and exe.')
 		parser.add_argument('--3dstool-url', metavar='url', dest='dstool_url', nargs=1, \
-			default=[TOOLS['3dstool'][opSys]], \
+			default=[TOOLS['3dstool'][opSys]['url']], \
 			help='The direct download link to 3dstool. Supported file types are zip and exe.')
 		parser.add_argument('--ctrtool-url', metavar='url', dest='ctrtool_url', nargs=1, \
-			default=[TOOLS['ctrtool'][opSys]], \
+			default=[TOOLS['ctrtool'][opSys]['url']], \
 			help='The direct download link to ctrtool. Supported file types are zip and exe.')
 		parser.add_argument('--makerom-url', metavar='url', dest='makerom_url', nargs=1, \
-			default=[TOOLS['makerom'][opSys]], \
+			default=[TOOLS['makerom'][opSys]['url']], \
 			help='The direct download link to makerom. Supported file types are zip and exe.')
 		parser.add_argument('--romfs', metavar='file', dest='patch_romfs', nargs=1, default='RomFS.xdelta', \
 			help='The name of the patch file for DecryptedRomFS.bin')
@@ -644,16 +663,16 @@ def main():
 		
 		# main
 		print('~~ Download Tools ~~')
-		downloadExe(args.xdelta_url[0],  'xdelta.exe')
-		downloadExe(args.dstool_url[0],  '3dstool.exe')
-		downloadExe(args.ctrtool_url[0], 'ctrtool.exe')
-		downloadExe(args.makerom_url[0], 'makerom.exe')
+		downloadTool(args.xdelta_url[0],  TOOLS['xdelta'][opSys]['exe'])
+		downloadTool(args.dstool_url[0],  TOOLS['3dstool'][opSys]['exe'])
+		downloadTool(args.ctrtool_url[0], TOOLS['ctrtool'][opSys]['exe'])
+		downloadTool(args.makerom_url[0], TOOLS['makerom'][opSys]['exe'])
 		print()
 		
 		print('~~ Extract Games ~~')
 		fails = list()
 		for game_file in sorted({game for _, game, _ in mappings}, key=lambda x: next(i for i, (_, x2, _) in enumerate(mappings) if x == x2)):
-			success = extractGame(game_file)
+			success = extractGame(game_file, dstool=TOOLS['3dstool'][opSys]['exe'], ctrtool=TOOLS['ctrtool'][opSys]['exe'])
 			if not success: fails.append(game_file)
 		print()
 		
@@ -664,7 +683,7 @@ def main():
 				fails.append((patch_file, game_file))
 				continue
 			prepareGame(patch_file, game_file)
-			success = applyPatches(patch_file, game_file, patches, args.ignore_incompatible_patches)
+			success = applyPatches(patch_file, game_file, patches, xdelta=TOOLS['xdelta'][opSys]['exe'], ignore_incompatible_patches=args.ignore_incompatible_patches)
 			if not success: fails.append((patch_file, game_file))
 		print()
 		
@@ -673,7 +692,7 @@ def main():
 			if (patch_file, game_file) in fails:
 				print('Skip', patch_file, '→', game_file)
 				continue
-			success = rebuildGame(patch_file, game_file, version)
+			success = rebuildGame(patch_file, game_file, version, dstool=TOOLS['3dstool'][opSys]['exe'], makerom=TOOLS['makerom'][opSys]['exe'])
 			if not success: fails.append((patch_file, game_file))
 		print()
 		
@@ -688,13 +707,19 @@ def main():
 			print()
 			print('~~ Clean Up ~~')
 			if command == 'y': cleanUp(mappings=mappings)
-			else: cleanUp(mappings=None, files=['xdelta.exe', '3dstool.exe', 'ctrtool.exe', 'makerom.exe'])
+			else: cleanUp(mappings=None, files=[tool[opSys]['exe'] for tool in TOOLS.values()])
 			print()
 			input('Press Enter to exit...')
 		
+	except KeyboardInterrupt as e:
+		print('KeyboardInterrupt')
+		print()
+		input('Press Enter to exit...')
 	except Exception as e:
 		import traceback
 		traceback.print_exc()
+		print()
+		input('Press Enter to exit...')
 
 if __name__ == '__main__':
 	main()
