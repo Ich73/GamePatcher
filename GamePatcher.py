@@ -20,7 +20,7 @@ import webbrowser
 import platform
 import ssl
 
-VERSION = 'v1.1.2'
+VERSION = 'v1.1.3'
 REPOSITORY = r'Ich73/GamePatcher'
 
 TOOLS = {
