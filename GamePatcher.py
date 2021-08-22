@@ -79,7 +79,7 @@ def checkUpdates():
 		# query api
 		latest = r'https://api.github.com/repos/%s/releases/latest' % REPOSITORY
 		with urlopen(latest, timeout = 1, context=ssl._create_unverified_context()) as url:
-			data = json.loads(url.read().decode())
+			data = json.loads(url.read().decode(errors='replace'))
 		tag = data['tag_name']
 		link = data['html_url']
 		
@@ -338,7 +338,7 @@ def extractGame(game_file, dstool, ctrtool):
 		makedirs(game_dir, exist_ok=True)
 		if mode == 'cia':
 			proc = run('"%s" -x --content="%s" "%s"' % (abspath(ctrtool), abspath(join(game_dir, 'Decrypted')), abspath(game_file)), shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 			partitions = list()
 			for decrypted_file in [f for f in listdir(game_dir) if f.startswith('Decrypted')]:
 				id = int(decrypted_file[10:14])
@@ -346,7 +346,7 @@ def extractGame(game_file, dstool, ctrtool):
 				partitions.append(id)
 		elif mode == '3ds':
 			proc = run('"%s" -xtf 3ds "%s" --header HeaderNCCH.bin -0 DecryptedPartition0.bin -1 DecryptedPartition1.bin -2 DecryptedPartition2.bin -6 DecryptedPartition6.bin -7 DecryptedPartition7.bin' % (abspath(dstool), abspath(game_file)), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 			partitions = [int(f[18]) for f in listdir(game_dir) if f.startswith('DecryptedPartition')]
 		
 		# step 2: DecryptedPartitionX.bin -> HeaderNCCHX.bin, DecryptedXXX.bin, ...
@@ -354,22 +354,22 @@ def extractGame(game_file, dstool, ctrtool):
 		if 0 in partitions:
 			print(' ', 'Partition0')
 			proc = run('"%s" -xtf cxi DecryptedPartition0.bin --header HeaderNCCH0.bin --exh DecryptedExHeader.bin --exefs DecryptedExeFS.bin --romfs DecryptedRomFS.bin --logo LogoLZ.bin --plain PlainRGN.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		if 1 in partitions:
 			print(' ', 'Partition1')
 			proc = run('"%s" -xtf cfa DecryptedPartition1.bin --header HeaderNCCH1.bin --romfs DecryptedManual.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		if 2 in partitions:
 			print(' ', 'Partition2')
 			proc = run('"%s" -xtf cfa DecryptedPartition2.bin --header HeaderNCCH2.bin --romfs DecryptedDownloadPlay.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		for id in partitions: remove(join(game_dir, 'DecryptedPartition%d.bin' % id))
 		
 		# step 3: DecryptedExeFS.bin -> ExtractedExeFS
 		print('Extracting Step 3/3')
 		if isfile(join(game_dir, 'DecryptedExeFS.bin')):
 			proc = run('"%s" -xtf exefs DecryptedExeFS.bin --exefs-dir ExtractedExeFS --header HeaderExeFS.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 			exefs_dir = join(game_dir, 'ExtractedExeFS')
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
@@ -442,7 +442,7 @@ def rebuildGame(patch_file, game_file, version, dstool, makerom):
 			if isfile(join(exefs_dir, 'banner.bin')): rename(join(exefs_dir, 'banner.bin'), join(exefs_dir, 'banner.bnr'))
 			if isfile(join(exefs_dir, 'icon.bin')):   rename(join(exefs_dir, 'icon.bin'),   join(exefs_dir, 'icon.icn'))
 			proc = run('"%s" -ctf exefs CustomExeFS.bin --exefs-dir CustomExeFS --header CustomHeaderExeFS.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 			if isfile(join(exefs_dir, 'banner.bnr')): rename(join(exefs_dir, 'banner.bnr'), join(exefs_dir, 'banner.bin'))
 			if isfile(join(exefs_dir, 'icon.icn')):   rename(join(exefs_dir, 'icon.icn'),   join(exefs_dir, 'icon.bin'))
 		
@@ -454,15 +454,15 @@ def rebuildGame(patch_file, game_file, version, dstool, makerom):
 			if isfile(join(game_dir, 'CustomLogoLZ.bin')):   arguments.append('--logo CustomLogoLZ.bin')
 			if isfile(join(game_dir, 'CustomPlainRGN.bin')): arguments.append('--plain CustomPlainRGN.bin')
 			proc = run('"%s" -ctf cxi CustomPartition0.bin %s' % (abspath(dstool), ' '.join(arguments)), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH1.bin', 'CustomManual.bin']):
 			print(' ', 'Partition1')
 			proc = run('"%s" -ctf cfa CustomPartition1.bin --header CustomHeaderNCCH1.bin --romfs CustomManual.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		if all(isfile(join(game_dir, f)) for f in ['CustomHeaderNCCH2.bin', 'CustomDownloadPlay.bin']):
 			print(' ', 'Partition2')
 			proc = run('"%s" -ctf cfa CustomPartition2.bin --header CustomHeaderNCCH2.bin --romfs CustomDownloadPlay.bin' % abspath(dstool), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		
 		# step 3: CustomPartitionX.bin -> cia / 3ds
 		print('Rebuilding Step 3/3')
@@ -470,12 +470,12 @@ def rebuildGame(patch_file, game_file, version, dstool, makerom):
 			print(' ', 'CIA', int2version(version))
 			contents = ['-content "%s":%s:%s' % (abspath(join(game_dir, f)), f[15], f[15]) for f in listdir(game_dir) if f.startswith('CustomPartition')]
 			proc = run('"%s" -f cia %s -ver %d -o "%s" -target p -ignoresign' % (abspath(makerom), ' '.join(contents), version, abspath(rebuilt_game_file)), shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		elif mode == '3ds':
 			contents = ['--header "%s"' % abspath(join(game_dir, 'HeaderNCCH.bin'))]
 			contents += ['-%s "%s"' % (f[15], abspath(join(game_dir, f))) for f in listdir(game_dir) if f.startswith('CustomPartition')]
 			proc = run('"%s" -ctf 3ds "%s" --header HeaderNCCH.bin %s' % (abspath(dstool), abspath(rebuilt_game_file), ' '.join(contents)), shell=True, stdout=PIPE, stderr=STDOUT)
-			if proc.returncode != 0: raise Exception(proc.stdout.decode())
+			if proc.returncode != 0: raise Exception(proc.stdout.decode(errors='replace'))
 		for file in [f for f in listdir(game_dir) if f.startswith('CustomPartition')]: remove(join(game_dir, file))
 		
 		# success
@@ -511,9 +511,9 @@ def applyPatches(patch_file, game_file, patches, xdelta, ignore_incompatible_pat
 			proc = run('"%s" -f -d -s %s Patches/%s %s' % (abspath(xdelta), orig, patch, custom), cwd=game_dir, shell=True, stdout=PIPE, stderr=STDOUT)
 			if proc.returncode != 0:
 				if ignore_incompatible_patches:
-					print(proc.stdout.decode().strip())
+					print(proc.stdout.decode(errors='replace').strip())
 					print('WARNING: Failed to apply', patch)
-				else: raise Exception(proc.stdout.decode())
+				else: raise Exception(proc.stdout.decode(errors='replace'))
 		
 		# clean up
 		rmtree(patch_dir)
